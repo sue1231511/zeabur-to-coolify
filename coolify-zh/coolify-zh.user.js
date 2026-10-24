@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Coolify 汉化 + 中英切换（自托管 v4）
 // @namespace    https://github.com/sue1231511/zeabur-to-coolify
-// @version      1.0.2
+// @version      1.0.3
 // @description  Coolify v4 控制台界面汉化，右下角悬浮按钮一键中/英切换。纯本地字典替换，不发起任何网络请求，不读取 cookie/token/环境变量的值，不修改任何用户数据。
 // @author       小鱼干、晏安 (for 猫猫)
 // @license      MIT
@@ -50,6 +50,13 @@
  * - 悬浮按钮的图标改用 createElementNS 逐个建节点，全文件不再有任何把字符串当 HTML 解析的写法。
  * - 公开发布：@match 改成占位地址，安装前改成你自己的面板域名。
  *   不写 @updateURL / @downloadURL：不会自动从网上拉新版本，更新由你手动替换。
+ *
+ * v1.0.3 变更：
+ * - 切换按钮从右下角的深色圆球，改为顶栏最右边的按钮，直接借用 Coolify 顶栏
+ *   「链接」按钮的类名，外观和主题色跟原生一致；按钮上的字显示要切换到的语言。
+ *   窄屏（顶栏隐藏）时退回右下角，颜色取 Coolify 主题变量。
+ * - 按钮只挂在顶栏容器末尾，不进入任何 Livewire 组件内部；被页面冲掉会自动补回。
+ * - 补译「行内注释需在 # 前留空格（例如：…）会被去掉。」的后半句。
  */
 
 (function () {
@@ -67,6 +74,7 @@
     var LOG_LIMIT = 100;
     var BTN_ID = 'coolify-zh-toggle';
     var BTN_STYLE_ID = 'coolify-zh-style';
+    var SLOT_ID = 'coolify-zh-slot'; // 包着切换按钮的外层容器（v1.0.3）
 
     // =========================================================================
     // 一、中英对照字典（按页面分组，方便以后补词）
@@ -1179,7 +1187,9 @@
             'No matching keys in the secret manager.': '密钥管理器里没有匹配的密钥。',
             'No secrets found at this source.': '此代码来源没有找到密钥。',
             'No shared variables found in': '没有在以下位置找到共享变量：',
-            'Inline comments with space before # (e.g.,': '行内注释需在 # 前留空格（例如：'
+            'Inline comments with space before # (e.g.,': '行内注释需在 # 前留空格（例如：',
+            // v1.0.3：上一句的后半截（中间是被跳过的代码示例 KEY=value #comment）
+            ') are stripped.': '）会被去掉。'
         },
 
         // ---------- 杂项：云厂商 / 错误页 / 邮件等 ----------
@@ -2707,11 +2717,11 @@
 
     // 绝不进入的元素：代码 / 日志 / 终端 / 编辑器 / 用户数据
     var SKIP_TAGS = { 'SCRIPT': 1, 'STYLE': 1, 'CODE': 1, 'PRE': 1, 'TEXTAREA': 1, 'INPUT': 1, 'SELECT': 1, 'KBD': 1, 'SAMP': 1, 'NOSCRIPT': 1 };
-    var SKIP_SEL = 'pre, code, kbd, samp, textarea, input, select, script, style, .font-mono, .coolify-monaco-editor, .monaco-editor, .xterm, [contenteditable="true"], .logs-viewer-viewport, .font-logs';
+    var SKIP_SEL = 'pre, code, kbd, samp, textarea, input, select, script, style, .font-mono, .coolify-monaco-editor, .monaco-editor, .xterm, [contenteditable="true"], .logs-viewer-viewport, .font-logs, #' + SLOT_ID;
     // 属性的跳过区（v1.0.2）：输入框本身的 placeholder 要翻，所以不排除 input / textarea / select；
     // 只排除编辑器、终端、日志区和本脚本自己的按钮。
     var ATTR_SKIP_TAGS = { 'SCRIPT': 1, 'STYLE': 1, 'NOSCRIPT': 1 };
-    var ATTR_SKIP_SEL = '.coolify-monaco-editor, .monaco-editor, .xterm, [contenteditable="true"], .logs-viewer-viewport, .font-logs, #' + BTN_ID;
+    var ATTR_SKIP_SEL = '.coolify-monaco-editor, .monaco-editor, .xterm, [contenteditable="true"], .logs-viewer-viewport, .font-logs, #' + SLOT_ID;
     var ATTR_NAMES = ['placeholder', 'title', 'aria-label'];
     var ATTR_QUERY = '[placeholder], [title], [aria-label]';
 
@@ -2960,8 +2970,8 @@
             if (!node) { return false; }
             var el = node.nodeType === 1 ? node : node.parentElement;
             if (!el) { return false; }
-            if (el.id === BTN_ID || el.id === BTN_STYLE_ID) { return true; }
-            return !!(el.closest && (el.closest('#' + BTN_ID) || el.closest('#' + BTN_STYLE_ID)));
+            if (el.id === SLOT_ID || el.id === BTN_ID || el.id === BTN_STYLE_ID) { return true; }
+            return !!(el.closest && (el.closest('#' + SLOT_ID) || el.closest('#' + BTN_STYLE_ID)));
         } catch (err) {
             log('isOwnNode', err, 'nodeType=' + (node && node.nodeType));
             return false; // 判断不了按外部变化处理，宁可多扫不可漏扫
@@ -3015,6 +3025,8 @@
                 // en 模式只处理还原（新增节点无需动作）
                 if (records.length) { scanNewSubtree(records); }
             }
+            // 页面有变动时顺手确认按钮还在、位置对（顶栏被重新渲染后会把按钮冲掉）
+            if (records.length) { placeButton(); }
         } catch (err) {
             log('work', err, 'pending=' + pendingRecords.length);
         } finally {
@@ -3051,27 +3063,37 @@
     }
 
     // =========================================================================
-    // 六、右下角悬浮切换按钮（手绘 SVG，无 emoji，无网络请求）
-    // -------------------------------------------------------------------------（BTN_ID / BTN_STYLE_ID 常量已上移到文件顶部配置区）
+    // 六、中 / 英切换按钮（手绘 SVG，无 emoji，无网络请求）
+    // -------------------------------------------------------------------------
+    // v1.0.3：按钮从右下角的深色圆球，改成放在顶栏最右边，直接借用 Coolify 顶栏
+    // 「链接」按钮的类名（app-tab 等），所以外观、悬停效果、主题色都和原生按钮一致。
+    // 顶栏只在宽屏（≥1024px）显示；窄屏时按钮退回右下角，样式同样取自 Coolify 的主题变量。
+    // 按钮只挂在顶栏容器的末尾，不放进任何 Livewire 组件内部，不会干扰 Livewire 的 DOM 比对。
+    // （BTN_ID / BTN_STYLE_ID / SLOT_ID 常量在文件顶部配置区）
 
-    // SVG 图标：左边「中」字（口 + 竖），右边字母 A —— 中 / EN 双语含义
+    // 图标：左边一个「文」，右边一个「A」，线条风格照 Coolify 顶栏图标（1.5 线宽、圆头）。
     // 用 createElementNS 逐个建节点，脚本里没有任何把字符串当 HTML 解析的地方。
     var SVG_NS = 'http://www.w3.org/2000/svg';
+    var STROKE = { stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', fill: 'none' };
     var ICON_PARTS = [
-        ['rect', { x: '3', y: '6', width: '10', height: '10', rx: '1.6', stroke: 'currentColor', 'stroke-width': '1.7' }],
-        ['path', { d: 'M8 3v16', stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round' }],
-        ['path', { d: 'M14.6 21 18 10.5 21.4 21', stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }],
-        ['path', { d: 'M15.9 17.4h4.2', stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round' }]
+        ['path', { d: 'M2.5 5.5h10' }],                         // 文：上横
+        ['path', { d: 'M7.5 3v2.5' }],                          // 文：上点
+        ['path', { d: 'M10.5 5.5c-.9 4.6-3.6 7.6-7.5 9.5' }],   // 文：左撇
+        ['path', { d: 'M4.8 5.5c.9 3.9 3.2 6.9 6.7 8.6' }],     // 文：右捺
+        ['path', { d: 'M13.5 21l4-10 4 10' }],                  // A：两条斜边
+        ['path', { d: 'M15 17.5h5' }]                           // A：横
     ];
 
     function buildIcon() {
         try {
             var svg = document.createElementNS(SVG_NS, 'svg');
-            var rootAttrs = { viewBox: '0 0 24 24', width: '22', height: '22', fill: 'none', 'aria-hidden': 'true' };
+            var rootAttrs = { 'class': 'size-4 size-3.5 shrink-0 opacity-70', viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true' };
             Object.keys(rootAttrs).forEach(function (k) { svg.setAttribute(k, rootAttrs[k]); });
             ICON_PARTS.forEach(function (part) {
                 var el = document.createElementNS(SVG_NS, part[0]);
-                Object.keys(part[1]).forEach(function (k) { el.setAttribute(k, part[1][k]); });
+                var attrs = part[1];
+                Object.keys(STROKE).forEach(function (k) { el.setAttribute(k, STROKE[k]); });
+                Object.keys(attrs).forEach(function (k) { el.setAttribute(k, attrs[k]); });
                 svg.appendChild(el);
             });
             return svg;
@@ -3081,39 +3103,24 @@
         }
     }
 
+    // 只有窄屏兜底（右下角）需要的一点定位样式；颜色全部取 Coolify 自己的主题变量，取不到才用后面的默认值。
     function injectButtonStyle() {
         try {
             if (document.getElementById(BTN_STYLE_ID)) { return; }
             var css = [
-                '#' + BTN_ID + ' {',
+                '#' + SLOT_ID + ' { display: flex; align-items: center; flex-shrink: 0; margin-left: 2px; }',
+                '#' + SLOT_ID + '.coolify-zh-floating {',
                 '  position: fixed;',
-                '  right: 14px;',
-                '  bottom: 16px;',
+                '  right: 12px;',
+                '  bottom: 12px;',
                 '  z-index: 98;', // 低于 Coolify 确认弹窗(z-99)：弹窗打开时按钮被盖住，不打扰
-                '  width: 46px;',
-                '  height: 46px;',
-                '  border-radius: 50%;',
-                '  border: 1px solid rgba(127,127,127,.45);',
-                '  background: rgba(22,22,22,.72);',
-                '  color: #f5f5f5;',
-                '  display: flex;',
-                '  align-items: center;',
-                '  justify-content: center;',
-                '  cursor: pointer;',
-                '  box-shadow: 0 2px 10px rgba(0,0,0,.35);',
-                '  backdrop-filter: blur(6px);',
-                '  -webkit-backdrop-filter: blur(6px);',
-                '  padding: 0;',
                 '  margin: 0;',
-                '  touch-action: manipulation;',
-                '  user-select: none;',
-                '  -webkit-tap-highlight-color: transparent;',
+                '  border-radius: 6px;',
+                '  background: var(--coollabs-elevated, #fff);',
+                '  border: 1px solid var(--coollabs-line, rgba(127,127,127,.3));',
                 '}',
-                '#' + BTN_ID + ':hover { background: rgba(88,28,135,.85); }',
-                '#' + BTN_ID + ':active { transform: scale(.94); }',
-                '@media (max-width: 430px) {',
-                '  #' + BTN_ID + ' { right: 10px; bottom: 12px; width: 48px; height: 48px; }',
-                '}'
+                '#' + BTN_ID + ' { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }',
+                '#' + SLOT_ID + '.coolify-zh-floating #' + BTN_ID + ' { min-height: 40px; }'
             ].join('\n');
             var style = document.createElement('style');
             style.id = BTN_STYLE_ID;
@@ -3124,13 +3131,16 @@
         }
     }
 
-    function updateButtonTitle(btn) {
+    // 按钮上的字：显示「点了会切到哪种语言」，和大多数网站的语言切换一个习惯
+    function updateButtonLabel(btn) {
         try {
-            var tip = currentLang === 'zh' ? '当前：中文 —— 点击切换到 English' : 'Current: English — click for 中文';
+            var tip = currentLang === 'zh' ? '汉化脚本：当前中文，点击切换到 English' : 'Coolify 汉化脚本：当前 English，点击切换到中文';
             btn.setAttribute('title', tip);
             btn.setAttribute('aria-label', tip);
+            var label = btn.querySelector('.coolify-zh-label');
+            if (label) { label.textContent = currentLang === 'zh' ? 'English' : '中文'; }
         } catch (err) {
-            log('updateButtonTitle', err);
+            log('updateButtonLabel', err);
         }
     }
 
@@ -3148,7 +3158,7 @@
             log('switchLang', err, 'next=' + next);
         }
         var btn = document.getElementById(BTN_ID);
-        if (btn) { updateButtonTitle(btn); }
+        if (btn) { updateButtonLabel(btn); }
     }
 
     function restoreAll() {
@@ -3161,28 +3171,85 @@
         }
     }
 
-    function injectButton() {
+    // 顶栏右侧容器：Coolify v4.5.0 是 header.app-topbar 的最后一个子元素。
+    // 窄屏时整条顶栏被隐藏（display:none），这时返回 null，按钮退回右下角。
+    function findTopbarSlotParent() {
         try {
-            if (document.getElementById(BTN_ID)) { return; }
-            injectButtonStyle();
-            var btn = document.createElement('button');
-            btn.id = BTN_ID;
-            btn.type = 'button';
-            var icon = buildIcon();
-            if (icon) { btn.appendChild(icon); } else { btn.textContent = '中/A'; }
-            updateButtonTitle(btn);
-            btn.addEventListener('click', function (ev) {
-                try {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    switchLang(currentLang === 'zh' ? 'en' : 'zh');
-                } catch (err) {
-                    log('btn.click', err);
-                }
-            });
-            (document.body || document.documentElement).appendChild(btn);
+            var bar = document.querySelector('header.app-topbar > div:last-child');
+            if (!bar) { return null; }
+            var header = bar.parentElement;
+            if (!header || window.getComputedStyle(header).display === 'none') { return null; }
+            return bar;
         } catch (err) {
-            log('injectButton', err);
+            log('findTopbarSlotParent', err);
+            return null;
+        }
+    }
+
+    function createButton() {
+        var slot = document.createElement('div');
+        slot.id = SLOT_ID;
+        var btn = document.createElement('button');
+        btn.id = BTN_ID;
+        btn.type = 'button';
+        btn.className = 'app-tab shrink-0 gap-1'; // 与顶栏「链接」按钮同一组类名
+        var inner = document.createElement('span');
+        inner.className = 'inline-flex items-center gap-2';
+        var icon = buildIcon();
+        if (icon) { inner.appendChild(icon); }
+        var label = document.createElement('span');
+        label.className = 'coolify-zh-label';
+        inner.appendChild(label);
+        btn.appendChild(inner);
+        updateButtonLabel(btn);
+        btn.addEventListener('click', function (ev) {
+            try {
+                ev.preventDefault();
+                ev.stopPropagation();
+                switchLang(currentLang === 'zh' ? 'en' : 'zh');
+            } catch (err) {
+                log('btn.click', err);
+            }
+        });
+        slot.appendChild(btn);
+        return slot;
+    }
+
+    // 确保按钮存在、并且在该在的位置：有顶栏就放顶栏最右边，没有就放右下角。
+    // 位置已经对的话什么都不做，所以反复调用也不会产生多余的 DOM 变动。
+    function placeButton() {
+        try {
+            injectButtonStyle();
+            var slot = document.getElementById(SLOT_ID);
+            if (!slot) { slot = createButton(); }
+            var parent = findTopbarSlotParent();
+            if (parent) {
+                if (slot.parentElement !== parent || slot !== parent.lastElementChild) { parent.appendChild(slot); }
+                if (slot.classList.contains('coolify-zh-floating')) { slot.classList.remove('coolify-zh-floating'); }
+            } else {
+                var body = document.body || document.documentElement;
+                if (slot.parentElement !== body) { body.appendChild(slot); }
+                if (!slot.classList.contains('coolify-zh-floating')) { slot.classList.add('coolify-zh-floating'); }
+            }
+        } catch (err) {
+            log('placeButton', err);
+        }
+    }
+
+    // 兼容旧名字：启动和换页时调用
+    function injectButton() {
+        placeButton();
+    }
+
+    // 窗口在宽屏 / 窄屏之间切换时，顶栏会出现或消失，按钮跟着挪位置
+    function watchViewport() {
+        try {
+            if (!window.matchMedia) { return; }
+            var mq = window.matchMedia('(min-width: 1024px)');
+            var onChange = function () { placeButton(); };
+            if (mq.addEventListener) { mq.addEventListener('change', onChange); } else if (mq.addListener) { mq.addListener(onChange); }
+        } catch (err) {
+            log('watchViewport', err);
         }
     }
 
@@ -3206,6 +3273,7 @@
         try {
             startObserver();
             injectButton();
+            watchViewport();
             scan(document);
             // Livewire 3 事件：wire:navigate 完成换页
             document.addEventListener('livewire:navigated', onNavigated);
