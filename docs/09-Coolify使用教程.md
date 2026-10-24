@@ -94,7 +94,7 @@ Coolify 里的东西是一层套一层的：
 
 - **代理（Proxy）**：Traefik 的状态，可以重启、停止、看日志。改了代理配置后要重启代理才生效。重启期间所有网站都打不开，挑没人用的时候做。
 - **Docker 清理（Docker Cleanup）**：清理频率和规则。**未使用的卷保持“保留”。**
-- **指标（Metrics）/ 流量分析（Analytics）**：要先启用 Sentinel，才能看到 CPU、内存和访问量。启用流量分析会重启 Sentinel 和代理，应用会短暂中断。
+- **指标（Metrics）/ 流量分析（Analytics）**：要先启用 Sentinel，才能看到 CPU、内存和访问量。启用流量分析会重启 Sentinel 和代理，应用会短暂中断。指标只有 CPU 和内存两条百分比曲线，想看核数、磁盘余量和每个容器的占用，见[服务器监控：Beszel](13-服务器监控-Beszel.md)。
 - **安全 → 补丁（Security → Patches）**：系统软件包更新。
 
 ## 通知
